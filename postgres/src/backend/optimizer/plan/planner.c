@@ -1483,7 +1483,9 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
     }
 
     /*
-     * extract optimize exactly one AND-group (linked conditions that needed to optimize)
+     * *extractOp* try to make predicate from OpExpr
+     *
+     * *extract* optimize exactly one AND-group (linked conditions that needed to optimize)
      *
      *  *extract_root*
      * if tree starts with OR - extract from args of all AND nodes
@@ -1505,7 +1507,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
             Node* firstNode = linitial(oExpr->args);
             Node* secondNode = lsecond(oExpr->args);
             if (!firstNode || !secondNode) {
-                return NULL;
+                return NULL;                        // Nodes doesn't exists
             }
             Const *constantNode;
 
@@ -1524,10 +1526,18 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
             }
 
             if (IsA(firstNode, Var)) {
-                first = extract_Var((Var *) firstNode);
+                if (((Var *) firstNode)->vartype == 23) {
+                    first = extract_Var((Var *) firstNode);
+                } else {
+                    return NULL;                                    // unknown (unsupported type)
+                }
             } else {
                 if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
-                    first = extract_OpVar((OpExpr *) firstNode);
+                    if (((OpExpr *) firstNode)->opresulttype == 23) {
+                        first = extract_OpVar((OpExpr *) firstNode);
+                    } else {
+                        return NULL;                                // unknown (unsupported type)
+                    }
                 } else {
                     if (IsA(firstNode, Const)) {
                         constantNode = (Const *) firstNode;
@@ -1535,13 +1545,16 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
                             hasConst = true;
                             constant = extract_int_Const(constantNode);
                         } else {
-                            return NULL;
+                            return NULL;                               // unknown (unsupported type)
                         }
                     }
                 }
             }
 
             if (IsA(secondNode, Var)) {
+                if (((Var *) secondNode)->vartype != 23) {
+                    return NULL;                                    // unknown (unsupported type)
+                }
                 if (hasConst) {
                     first = extract_Var((Var *) secondNode);
                 } else {
@@ -1549,6 +1562,9 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
                 }
             } else {
                 if (IsA(secondNode, OpExpr)) {
+                    if (((OpExpr *) secondNode)->opresulttype != 23) {
+                        return NULL;                                // unknown (unsupported type)
+                    }
                     if (hasConst) {
                         first = extract_OpVar((OpExpr *) secondNode);
                     } else {
@@ -1577,7 +1593,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
                 return make_predicate(first, cond_type, second);
             }
         } else {
-            return NULL;
+            return NULL; // Not-predicatable (in terms <, >, <=, >= transitivity)
         }
     }
 
@@ -1593,19 +1609,18 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
         };
 
         ListCell* listCell;
-        //char ** optimizedVars = malloc(sizeof(char**) * list_length(list));
         foreach(listCell, list) {
             Node *subNode = (Node *) lfirst(listCell);
             if ( IsA(subNode, OpExpr)) {
                 predicate *pred = extractOp((OpExpr *) subNode);
-                if(pred == NULL) {
-                    continue;
+                if(pred != NULL) {
+                    pl[index] = pred;
+                    index++;
+                    ereport(DEBUG5,
+                            (errmsg_internal("found %s at index %d:", "predicate ", extract_index),
+                                    errdetail_internal("%s", predicate_to_str(pred))));
                 }
-                pl[index] = pred;
-                index++;
-                ereport(LOG,
-                        (errmsg_internal("%s with index %d:", "predicate ", extract_index),
-                                errdetail_internal("%s", predicate_to_str(pred))));
+
 
             }
         }
@@ -1618,16 +1633,19 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 
             optimazeGraph(&graph, out, &indexG);
 
-            ereport(LOG,
+            ereport(DEBUG5,
                     (errmsg_internal("%s with index %d:", "predicate ", extract_index),
-                            errdetail_internal("indexG %d", indexG)));
+                            errdetail_internal("statements amount %d", indexG)));
 
             for (int i = 0; i < indexG; ++i) {
-            ereport(LOG,
+            ereport(DEBUG5,
                     (errmsg_internal("%s with index %d:", "predicate ", extract_index),
                             errdetail_internal("statements to add %s", out[i])));
             }
         }
+
+        mapClose(m);
+        free(pl);
 
     }
 

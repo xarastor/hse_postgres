@@ -25,4 +25,4 @@ RUN /usr/local/pgsql/bin/initdb -D /usr/local/pgsql/data
 ENV PGHOST /tmp
 
 # Run server
-CMD ["/usr/local/pgsql/bin/postgres", "-D", "/usr/local/pgsql/data"]
+CMD ["/usr/local/pgsql/bin/postgres", "-D", "/usr/local/pgsql/data", "-d", "5"]
