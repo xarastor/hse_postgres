@@ -1638,7 +1638,7 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
                             errdetail_internal("statements amount %d", indexG)));
 
             for (int i = 0; i < indexG; ++i) {
-            ereport(DEBUG5,
+            ereport(LOG,
                     (errmsg_internal("%s with index %d:", "predicate ", extract_index),
                             errdetail_internal("statements to add %s", out[i])));
             }
