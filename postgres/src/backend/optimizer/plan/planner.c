@@ -59,22 +59,12 @@
 #include "utils/syscache.h"
 
 /*
- * Transitivity includes
- */
-
-#include "stdio.h"
-#include "string.h"
-#include <stdlib.h>
-#include <ctype.h>
-
-#define MAP_BY_VAL 0
-#define MAP_BY_REF 1
-/*
  * Transitivity functions
  */
 
 int a2i(const char *s) {
     int sign = 1;
+    int num = 0;
     if(*s == '-') {
         sign = -1;
         s++;
@@ -82,7 +72,7 @@ int a2i(const char *s) {
     if (*s == '+') {
         s++;
     }
-    int num = 0;
+
     while(*s)
     {
         num = ((*s)-'0') + num * 10;
@@ -100,19 +90,6 @@ int numbers_only(const char *s)
     return 1;
 }
 
-typedef struct mapitem
-{
-    char* key;
-    void* val;
-    int type;
-} MI;
-
-typedef struct map
-{
-    int size;
-    MI* items;
-} M;
-
 M* mapNew()
 {
     M* map;
@@ -125,7 +102,6 @@ M* mapNew()
 }
 
 int isContant (M* map, int offset) {
-    char * tmp = map->items[offset].key;
     if (numbers_only(map->items[offset].key)) {
         return 1;
     }
@@ -137,6 +113,7 @@ int getConstants (M* map, int offset) {
         int tmp = a2i(map->items[offset].key);
         return tmp;
     }
+    return 0;
 }
 
 int getMapSize (M* map) {
@@ -203,15 +180,6 @@ void mapClose(M* map)
     free(map);
 }
 
-
-
-typedef struct {
-    char ** array;
-    // int *array;
-    size_t used;
-    size_t size;
-} Array;
-
 void initArray(Array *a, size_t initialSize) {
     a->array = (char **)malloc(initialSize * 16);
     a->used = 0;
@@ -236,11 +204,15 @@ void freeArray(Array *a) {
 
 // Потому что в gcc нет этой полезной функции
 char* itoa(int value, char * result, int base) {
+    char* ptr;
+    char *ptr1;
+    char tmp_char;
+    int tmp_value;
     // check that the base if valid
     if (base < 2 || base > 36) { *result = '\0'; return result; }
 
-    char* ptr = result, *ptr1 = result, tmp_char;
-    int tmp_value;
+    ptr = result;
+    ptr1 = result;
 
     do {
         tmp_value = value;
@@ -259,42 +231,21 @@ char* itoa(int value, char * result, int base) {
     return result;
 }
 
-typedef enum {
-    MORE,           // >
-    LESS,           // <
-    MORE_OR_EQUAL,  // >=
-    LESS_OR_EQUAL,  // <=
-    NOTHING_COND    // NULL
-} condition_type;
-
-typedef enum {
-    NUMERIC,
-    VARIABLE
-} node_type;
-
-typedef struct {
-    node_type type;
-    char variable_name[16];
-    int constant;
-} val;
-
-typedef struct {
-    val * rval;
-    val * lval;
-    condition_type cond;
-} predicate;
-
-typedef struct {
-    struct map* m;
-} graph_node;
-
-val * make_val_from_constant (int constant) {
+struct val * make_val_from_constant (int constant) {
+    char constant_str[16];
     val * v = malloc(sizeof(val));
     v->type = NUMERIC;
     v->constant = constant;
-    char constant_str[16];
-    stpcpy(v->variable_name, itoa(constant, &constant_str, 10));
+    stpcpy(v->variable_name, itoa(constant, (char *)(&constant_str), 10));
 
+    return v;
+}
+
+val * make_val_from_str_constant (char * constant) {
+    val * v = malloc(sizeof(val));
+    v->type = NUMERIC;
+    v->constant = a2i(constant);
+    stpcpy(v->variable_name, constant);
     return v;
 }
 
@@ -304,6 +255,16 @@ val * make_val_from_str (char * variable_name) {
     stpcpy(v->variable_name, variable_name);
 
     return v;
+}
+
+predicate * make_predicate_with_str_int(char * constant, condition_type cond, char * variable_name) {
+    val * lval = make_val_from_str_constant(constant);
+    val * rval = make_val_from_str(variable_name);
+    predicate * p = malloc(sizeof(predicate));
+    p->lval = lval;
+    p->rval = rval;
+    p->cond = cond;
+    return p;
 }
 
 predicate * make_predicate_with_int (int constant, condition_type cond, char * variable_name) {
@@ -326,18 +287,6 @@ predicate * make_predicate (char * variable_name1, condition_type cond, char * v
     return p;
 }
 
-condition_type str_to_cond_type (char * cond) {
-    if (strcmp(cond, "<") == 0) {
-        return LESS;
-    } else if (strcmp(cond, "<=") == 0) {
-        return LESS_OR_EQUAL;
-    } else if (strcmp(cond, ">") == 0) {
-        return MORE;
-    } else if (strcmp(cond, ">=") == 0) {
-        return MORE_OR_EQUAL;
-    }
-}
-
 char * cond_type_to_str (condition_type cond) {
     if (cond == MORE) {
         return ">";
@@ -348,15 +297,16 @@ char * cond_type_to_str (condition_type cond) {
     } else if (cond == LESS_OR_EQUAL) {
         return "<=";
     }
+    return NULL;
 }
 
 void print_graph_node (graph_node * graph, char * key) {
+    struct map * m = mapGet(key, graph->m);
+    Array *a;
     printf("%s\n", key);
     printf("    %2s [", cond_type_to_str(MORE));
 
-    struct map * m = mapGet(key, graph->m);
-
-    Array *a = mapGet(cond_type_to_str(MORE), m);
+    a = mapGet(cond_type_to_str(MORE), m);
     for (int i = 0; i < a->used; ++i) {
         printf("%s, ", a->array[i]);
     }
@@ -409,6 +359,7 @@ condition_type reverse_op (condition_type op) {
         return MORE;
     else if (op == MORE)
         return LESS;
+    return NOTHING_COND;
 }
 
 condition_type resolve_ops (condition_type op1, condition_type op2) {
@@ -418,8 +369,8 @@ condition_type resolve_ops (condition_type op1, condition_type op2) {
     if (op1 == LESS_OR_EQUAL && op2 == LESS_OR_EQUAL) {
         return LESS_OR_EQUAL;
     }
-    if (op1 == LESS && op2 == LESS_OR_EQUAL
-        || op1 == LESS_OR_EQUAL && op2 == LESS) {
+    if ((op1 == LESS && op2 == LESS_OR_EQUAL)
+        || (op1 == LESS_OR_EQUAL && op2 == LESS)) {
         return LESS;
     }
     if (op1 == MORE && op2 == MORE) {
@@ -428,8 +379,8 @@ condition_type resolve_ops (condition_type op1, condition_type op2) {
     if (op1 == MORE_OR_EQUAL && op2 == MORE_OR_EQUAL) {
         return MORE_OR_EQUAL;
     }
-    if (op1 == MORE && op2 == MORE_OR_EQUAL
-        || op1 == MORE_OR_EQUAL && op2 == MORE) {
+    if ((op1 == MORE && op2 == MORE_OR_EQUAL)
+        || (op1 == MORE_OR_EQUAL && op2 == MORE)) {
         return MORE;
     }
     return NOTHING_COND;
@@ -457,15 +408,19 @@ condition_type * near_ops (condition_type op) {
         out[1] = LESS_OR_EQUAL;
         return out;
     }
+    return NULL;
 }
 
 void addDeps (graph_node * graph,  char * name, predicate * sample) {
+    val * x;
+    val * y;
+    condition_type operate;
     if (mapGet(name, graph->m) == NULL) {
         make_empty_graph_node (graph, name);
     }
-    val * x = sample->lval;
-    val * y = sample->rval;
-    condition_type operate = sample->cond;
+    x = sample->lval;
+    y = sample->rval;
+    operate = sample->cond;
 
     if (strcmp(name, y->variable_name) == 0) {
         operate = reverse_op(operate);
@@ -483,10 +438,10 @@ void addDeps (graph_node * graph,  char * name, predicate * sample) {
 
 char * predicate_to_str (predicate * p) {
     char * out = malloc(38);
-    out[0] = '\0';
     char * r_var_name = p->rval->variable_name;
     char * l_var_name = p->lval->variable_name;
     char * cond_str = cond_type_to_str(p->cond);
+    out[0] = '\0';
 
     strcat(out, l_var_name);
     strcat(out, " ");
@@ -514,16 +469,23 @@ void genDepsGraph (graph_node * graph, predicate * samples[], int count) {
 void optimazeGraph (graph_node * graph, char ** out_str, int * offset) {
     void genCond (graph_node * graph, int constant, condition_type op, int index, char ** out_str, int * offset) {
         char constant_str[16];
-        itoa(constant, &constant_str, 10);
-        struct map* m = mapGet(constant_str, graph->m);
-        Array * deps = mapGet(cond_type_to_str(op), m);
+        struct map* m;
+        Array * deps;
+        char * dep;
+        condition_type * ops;
+        condition_type op1;
+        condition_type op2;
+        struct map* m_dep;
+        itoa(constant, (char*)&constant_str, 10);
+        m = mapGet(constant_str, graph->m);
+        deps = mapGet(cond_type_to_str(op), m);
 
-        char * dep = deps->array[index];
-        condition_type * ops = near_ops(op);
-        condition_type op1 = ops[0];
-        condition_type op2 = ops[1];
+        dep = deps->array[index];
+        ops = near_ops(op);
+        op1 = ops[0];
+        op2 = ops[1];
 
-        struct map* m_dep = mapGet(dep, graph->m);
+        m_dep = mapGet(dep, graph->m);
         if (resolve_ops(op, op1) != NOTHING_COND) {
             Array * a_dep = mapGet(cond_type_to_str(op1), m_dep);
             for (int i = 0; i < a_dep->used; ++i) {
@@ -550,12 +512,14 @@ void optimazeGraph (graph_node * graph, char ** out_str, int * offset) {
 
     for (int i = 0; i < getMapSize(graph->m); ++i) {
         if (isContant(graph->m, i)) {
+            struct map* m;
+            Array * deps;
             int constant = getConstants(graph->m, i);
             char constant_str[16];
-            itoa(constant, &constant_str, 10);
-            struct map* m = mapGet(constant_str, graph->m);
+            itoa(constant, (char*)&constant_str, 10);
+            m = mapGet(constant_str, graph->m);
 
-            Array * deps = NULL;
+            deps = NULL;
             for (int cond_ind = 0; cond_ind < 4; ++cond_ind) {
                 deps = mapGet(cond_type_to_str(conds[cond_ind]), m);
                 for (int j = 0; j < deps->used; ++j) {
@@ -563,6 +527,241 @@ void optimazeGraph (graph_node * graph, char ** out_str, int * offset) {
                 }
             }
         }
+    }
+}
+
+char* extract_Var(Var* var) {
+    char * res = malloc(16);
+    char numeric[14];
+    res[0] = 'I';
+    res[1] = '_';
+    res[2] = '\0';
+    strcpy(numeric, itoa(var->varno, (char *)(&numeric), 10));
+    strcat(res, numeric);
+    return res;
+
+}
+
+char* extract_OpVar(OpExpr* var) {
+    char * res = malloc(16);
+    char numeric[14];
+    res[0] = 'L';
+    res[1] = '_';
+    res[2] = '\0';
+    strcpy(numeric, itoa(var->location, (char *)(&numeric), 10));
+    strcat(res, numeric);
+    return res;
+}
+
+int extract_int_Const(Const* var) {
+    return DatumGetInt32(var->constvalue);
+}
+
+/*
+ * *extractOp* try to make predicate from OpExpr
+ *
+ * *extract* optimize exactly one AND-group (linked conditions that needed to optimize)
+ *
+ *  *extract_root*
+ * if tree starts with OR - extract from args of all AND nodes
+ * if tree starts with AND nodes extract from args of all tree nodes
+ * else extract from tree
+ */
+
+predicate* extractOp(OpExpr* oExpr) {
+    if (    oExpr->opfuncid == 147 ||   // >
+            oExpr->opfuncid == 150 ||   // >=
+            oExpr->opfuncid == 66  ||   // <
+            oExpr->opfuncid == 149)     // <=
+    {
+        bool hasConst = false;
+        char* first;
+        char* second;
+        int constant;
+        Const *constantNode;
+        condition_type cond_type;
+
+        Node* firstNode = linitial(oExpr->args);
+        Node* secondNode = lsecond(oExpr->args);
+        if (!firstNode || !secondNode) {
+            return NULL;                        // Nodes doesn't exists
+        }
+
+        if (oExpr->opfuncid == 147) {
+            cond_type = MORE;
+        }
+        if (oExpr->opfuncid == 150) {
+            cond_type = MORE_OR_EQUAL;
+        }
+        if (oExpr->opfuncid == 66) {
+            cond_type = LESS;
+        }
+        if (oExpr->opfuncid == 149) {
+            cond_type = LESS_OR_EQUAL;
+        }
+
+        if (IsA(firstNode, Var)) {
+            if (((Var *) firstNode)->vartype == 23) {
+                first = extract_Var((Var *) firstNode);
+            } else {
+                return NULL;                                    // unknown (unsupported type)
+            }
+        } else {
+            if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
+                if (((OpExpr *) firstNode)->opresulttype == 23) {
+                    first = extract_OpVar((OpExpr *) firstNode);
+                } else {
+                    return NULL;                                // unknown (unsupported type)
+                }
+            } else {
+                if (IsA(firstNode, Const)) {
+                    constantNode = (Const *) firstNode;
+                    if (constantNode->consttype == 23) {
+                        hasConst = true;
+                        constant = extract_int_Const(constantNode);
+                    } else {
+                        return NULL;                               // unknown (unsupported type)
+                    }
+                }
+            }
+        }
+
+        if (IsA(secondNode, Var)) {
+            if (((Var *) secondNode)->vartype != 23) {
+                return NULL;                                    // unknown (unsupported type)
+            }
+            if (hasConst) {
+                first = extract_Var((Var *) secondNode);
+            } else {
+                second = extract_Var((Var *) secondNode);
+            }
+        } else {
+            if (IsA(secondNode, OpExpr)) {
+                if (((OpExpr *) secondNode)->opresulttype != 23) {
+                    return NULL;                                // unknown (unsupported type)
+                }
+                if (hasConst) {
+                    first = extract_OpVar((OpExpr *) secondNode);
+                } else {
+                    second = extract_OpVar((OpExpr *) secondNode);
+                }
+            } else {
+                if (IsA(secondNode, Const)) {
+                    if (hasConst) {
+                        return NULL;                         // comparing constant with constant
+                    }
+                    constantNode = (Const *) secondNode;
+                    if (constantNode->consttype == 23) {
+                        hasConst = true;
+                        cond_type = reverse_op(cond_type);  // if constant is second we need to reverse cond_type
+                        constant = extract_int_Const(constantNode);
+                    } else {
+                        return NULL;                         // unknown (unsupported type)
+                    }
+                }
+            }
+        }
+
+        if (hasConst) {
+            return make_predicate_with_int(constant, cond_type, first);
+        } else {
+            return make_predicate(first, cond_type, second);
+        }
+    } else {
+        return NULL; // Not-predicatable (in terms <, >, <=, >= transitivity)
+    }
+}
+
+void extract(List* list, int extract_index) {
+
+    struct map * m = mapNew();
+    int index = 0;
+    ListCell* listCell;
+    char *out[20];
+    int indexG = 0;
+    predicate *pred;
+    predicate **pl = malloc(sizeof(predicate *) * list_length(list));
+    Node *subNode;
+    graph_node graph = {
+            m
+    };
+
+    foreach(listCell, list) {
+        subNode = (Node *) lfirst(listCell);
+        if ( IsA(subNode, OpExpr)) {
+            pred = extractOp((OpExpr *) subNode);
+            if(pred != NULL) {
+                pl[index] = pred;
+                index++;
+                ereport(DEBUG5,
+                        (errmsg_internal("found %s at index %d:", "predicate ", extract_index),
+                                errdetail_internal("%s", predicate_to_str(pred))));
+            }
+
+
+        }
+    }
+    if (index > 0) {
+        genDepsGraph(&graph, pl, index);
+        optimazeGraph(&graph, out, &indexG);
+        ereport(DEBUG5,
+                (errmsg_internal("%s with index %d:", "predicate ", extract_index),
+                        errdetail_internal("statements amount %d", indexG)));
+
+        for (int i = 0; i < indexG; ++i) {
+            ereport(LOG,
+                    (errmsg_internal("%s with index %d:", "predicate ", extract_index),
+                            errdetail_internal("statements to add %s", out[i])));
+        }
+    }
+
+    mapClose(m);
+    free(pl);
+
+}
+
+void extract_root(List* list) {
+    int extract_index = 0;
+    Node *node;
+    ListCell* listCell;
+    Node *subNode;
+    BoolExpr *bSubExpr;
+    BoolExpr *bExpr;
+    if (list_length(list) <= 0) {
+        return;
+    }
+    node = linitial(list);
+    if (!node) {
+        return;
+    }
+
+    if ( IsA(node, BoolExpr)) {
+        bExpr = (BoolExpr *) node;
+        if (bExpr->boolop == OR_EXPR) {
+            foreach(listCell, bExpr->args) {
+                subNode = (Node *) lfirst(listCell);
+                if ( IsA(subNode, BoolExpr)) {
+                    bSubExpr = (BoolExpr *) subNode;
+                    if (bSubExpr->boolop == AND_EXPR) {
+                        extract(bSubExpr->args, extract_index);
+                        extract_index++;
+                    }
+                }
+            }
+        } else {
+            foreach(listCell, list) {
+                subNode = (Node *) lfirst(listCell);
+                if ( IsA(subNode, BoolExpr)) {
+                    BoolExpr *bSubExpr = (BoolExpr *) subNode;
+                    if (bSubExpr->boolop == AND_EXPR) {
+                        extract(bSubExpr->args, extract_index);
+                        extract_index++;
+                    }
+                }
+            }
+        }
+    } else {
+        extract(list, extract_index);
     }
 }
 
@@ -1454,330 +1653,6 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
     /*
 	 * Debug transitivity
 	 */
-
-    char* extract_Var(Var* var) {
-        char * res = malloc(16);
-        res[0] = 'I';
-        res[1] = '_';
-        res[2] = '\0';
-        char numeric[14];
-        strcpy(numeric, itoa(var->varno, &numeric, 10));
-        strcat(res, numeric);
-        return res;
-
-    }
-
-    char* extract_OpVar(OpExpr* var) {
-        char * res = malloc(16);
-        res[0] = 'L';
-        res[1] = '_';
-        res[2] = '\0';
-        char numeric[14];
-        strcpy(numeric, itoa(var->location, &numeric, 10));
-        strcat(res, numeric);
-        return res;
-    }
-
-    int extract_int_Const(Const* var) {
-        return DatumGetInt32(var->constvalue);
-    }
-
-    /*
-     * *extractOp* try to make predicate from OpExpr
-     *
-     * *extract* optimize exactly one AND-group (linked conditions that needed to optimize)
-     *
-     *  *extract_root*
-     * if tree starts with OR - extract from args of all AND nodes
-     * if tree starts with AND nodes extract from args of all tree nodes
-     * else extract from tree
-     */
-
-    predicate* extractOp(OpExpr* oExpr) {
-        if (    oExpr->opfuncid == 147 ||   // >
-                oExpr->opfuncid == 150 ||   // >=
-                oExpr->opfuncid == 66  ||   // <
-                oExpr->opfuncid == 149)     // <=
-        {
-            bool hasConst = false;
-            char* first;
-            char* second;
-            int constant;
-
-            Node* firstNode = linitial(oExpr->args);
-            Node* secondNode = lsecond(oExpr->args);
-            if (!firstNode || !secondNode) {
-                return NULL;                        // Nodes doesn't exists
-            }
-            Const *constantNode;
-
-            condition_type cond_type;
-            if (oExpr->opfuncid == 147) {
-                cond_type = MORE;
-            }
-            if (oExpr->opfuncid == 150) {
-                cond_type = MORE_OR_EQUAL;
-            }
-            if (oExpr->opfuncid == 66) {
-                cond_type = LESS;
-            }
-            if (oExpr->opfuncid == 149) {
-                cond_type = LESS_OR_EQUAL;
-            }
-
-            if (IsA(firstNode, Var)) {
-                if (((Var *) firstNode)->vartype == 23) {
-                    first = extract_Var((Var *) firstNode);
-                } else {
-                    return NULL;                                    // unknown (unsupported type)
-                }
-            } else {
-                if (IsA(firstNode, OpExpr)) {                       //Expression into expression can't be an extractable
-                    if (((OpExpr *) firstNode)->opresulttype == 23) {
-                        first = extract_OpVar((OpExpr *) firstNode);
-                    } else {
-                        return NULL;                                // unknown (unsupported type)
-                    }
-                } else {
-                    if (IsA(firstNode, Const)) {
-                        constantNode = (Const *) firstNode;
-                        if (constantNode->consttype == 23) {
-                            hasConst = true;
-                            constant = extract_int_Const(constantNode);
-                        } else {
-                            return NULL;                               // unknown (unsupported type)
-                        }
-                    }
-                }
-            }
-
-            if (IsA(secondNode, Var)) {
-                if (((Var *) secondNode)->vartype != 23) {
-                    return NULL;                                    // unknown (unsupported type)
-                }
-                if (hasConst) {
-                    first = extract_Var((Var *) secondNode);
-                } else {
-                    second = extract_Var((Var *) secondNode);
-                }
-            } else {
-                if (IsA(secondNode, OpExpr)) {
-                    if (((OpExpr *) secondNode)->opresulttype != 23) {
-                        return NULL;                                // unknown (unsupported type)
-                    }
-                    if (hasConst) {
-                        first = extract_OpVar((OpExpr *) secondNode);
-                    } else {
-                        second = extract_OpVar((OpExpr *) secondNode);
-                    }
-                } else {
-                    if (IsA(secondNode, Const)) {
-                        if (hasConst) {
-                            return NULL;                         // comparing constant with constant
-                        }
-                        constantNode = (Const *) secondNode;
-                        if (constantNode->consttype == 23) {
-                            hasConst = true;
-                            cond_type = reverse_op(cond_type);  // if constant is second we need to reverse cond_type
-                            constant = extract_int_Const(constantNode);
-                        } else {
-                            return NULL;                         // unknown (unsupported type)
-                        }
-                    }
-                }
-            }
-
-            if (hasConst) {
-                return make_predicate_with_int(constant, cond_type, first);
-            } else {
-                return make_predicate(first, cond_type, second);
-            }
-        } else {
-            return NULL; // Not-predicatable (in terms <, >, <=, >= transitivity)
-        }
-    }
-
-    void extract(List* list, int extract_index) {
-
-        struct map * m = mapNew();
-
-        predicate **pl = malloc(sizeof(predicate *) * list_length(list));
-        int index = 0;
-
-        graph_node graph = {
-                m
-        };
-
-        ListCell* listCell;
-        foreach(listCell, list) {
-            Node *subNode = (Node *) lfirst(listCell);
-            if ( IsA(subNode, OpExpr)) {
-                predicate *pred = extractOp((OpExpr *) subNode);
-                if(pred != NULL) {
-                    pl[index] = pred;
-                    index++;
-                    ereport(DEBUG5,
-                            (errmsg_internal("found %s at index %d:", "predicate ", extract_index),
-                                    errdetail_internal("%s", predicate_to_str(pred))));
-                }
-
-
-            }
-        }
-        if (index > 0) {
-            genDepsGraph(&graph, pl, index);
-
-            char *out[20];
-
-            int indexG = 0;
-
-            optimazeGraph(&graph, out, &indexG);
-
-            ereport(DEBUG5,
-                    (errmsg_internal("%s with index %d:", "predicate ", extract_index),
-                            errdetail_internal("statements amount %d", indexG)));
-
-            for (int i = 0; i < indexG; ++i) {
-            ereport(LOG,
-                    (errmsg_internal("%s with index %d:", "predicate ", extract_index),
-                            errdetail_internal("statements to add %s", out[i])));
-            }
-        }
-
-        mapClose(m);
-        free(pl);
-
-    }
-
-    void extract_root(List* list) {
-        int extract_index = 0;
-        if (list_length(list) <= 0) {
-            return;
-        }
-        Node *node = linitial(list);
-        if (!node) {
-            return;
-        }
-        ListCell* listCell;
-
-        if ( IsA(node, BoolExpr)) {
-            BoolExpr *bExpr = (BoolExpr *) node;
-            if (bExpr->boolop == OR_EXPR) {
-                foreach(listCell, bExpr->args) {
-                    Node *subNode = (Node *) lfirst(listCell);
-                    if ( IsA(subNode, BoolExpr)) {
-                        BoolExpr *bSubExpr = (BoolExpr *) subNode;
-                        if (bSubExpr->boolop == AND_EXPR) {
-                            extract(bSubExpr->args, extract_index);
-                            extract_index++;
-                        }
-                    }
-                }
-            } else {
-                foreach(listCell, list) {
-                    Node *subNode = (Node *) lfirst(listCell);
-                    if ( IsA(subNode, BoolExpr)) {
-                        BoolExpr *bSubExpr = (BoolExpr *) subNode;
-                        if (bSubExpr->boolop == AND_EXPR) {
-                            extract(bSubExpr->args, extract_index);
-                            extract_index++;
-                        }
-                    }
-                }
-            }
-        } else {
-            extract(list, extract_index);
-        }
-    }
-
-
-
-    /*void describe(Node* node, int ident) {
-        ListCell* listCell;
-        if ( IsA(node, BoolExpr)) {
-            BoolExpr *bExpr = (BoolExpr *) node;
-            if (bExpr->boolop == AND_EXPR) {
-                ereport(DEBUG5,
-                        (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                errdetail_internal("%s", "Bool \"and\"")));
-
-            } else {
-                if (bExpr->boolop == OR_EXPR) {
-                    ereport(DEBUG5,
-                            (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                    errdetail_internal("%s", "Bool \"or\"")));
-                } else {
-                    ereport(DEBUG5,
-                            (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                    errdetail_internal("%s", "Bool \"not\" ")));
-                }
-            }
-            foreach(listCell, bExpr->args) {
-                describe((Node *) lfirst(listCell), ident + 1);
-            }
-        } else {
-            if (IsA(node, OpExpr)) {
-                OpExpr *oExpr = (OpExpr *) node;
-                if (    oExpr->opfuncid == 147 ||   // >
-                        oExpr->opfuncid == 150 ||   // >=
-                        oExpr->opfuncid == 66  ||   // <
-                        oExpr->opfuncid == 149)     // <=
-                {
-
-                    ereport(DEBUG5,
-                            (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                    errdetail_internal("OpExpr function id %d and location %d",
-                                                       oExpr->opfuncid, oExpr->location)));
-                    foreach(listCell, oExpr->args) {
-                        Node* subNode = (Node *) lfirst(listCell);
-                        describe(subNode, ident + 1);
-                    }
-
-                } else {
-                    ereport(DEBUG5,
-                            (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                    errdetail_internal("OpExpr function id %d and location %d and extract %s",
-                                                       oExpr->opfuncid, oExpr->location, extract_OpVar(oExpr))));
-                }
-            } else {
-                if (IsA(node, Var)) {
-                    Var *var = (Var *) node;
-                    if (var->vartype == 23) {
-                        ereport(DEBUG5,
-                                (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                        errdetail_internal("Var index %d and location %d and extract %s",
-                                                           var->varno, var->location, extract_Var(var))));
-                    } else {
-
-                        ereport(DEBUG5,
-                                (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                        errdetail_internal("%s", "Var undefined")));
-                    }
-                } else {
-                    if (IsA(node, Const)) {
-                        Const *constant = (Const *) node;
-                        if (constant->consttype == 23) {
-                            ereport(DEBUG5,
-                                    (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                            errdetail_internal("Const  value %d and location %d and extract %d",
-                                                               constant->constvalue, constant->location, extract_int_Const(constant))));
-                        } else {
-
-                            ereport(DEBUG5,
-                                    (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                            errdetail_internal("%s", "Const undefined")));
-                        }
-                    } else {
-
-                        ereport(DEBUG5,
-                                (errmsg_internal("%s with ident %d:", "describe ", ident),
-                                        errdetail_internal("%s", "undefined")));
-                    }
-                }
-            }
-        }
-    }*/
-
 
 
     //elog_node_display(DEBUG5, "parse->jointree->quals ", parse->jointree->quals, true);
